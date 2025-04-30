@@ -1,5 +1,5 @@
-import { ACTION, TRANSCRIPT_CHECK_INTERVAL, TRANSCRIPT_CHECK_TIMEOUT } from "@/constants";
-import { clickTranscriptButton, formatTranscript, scrapeTranscript } from "@/lib/scrapTranscript";
+import { ACTION } from "@/constants";
+import { clickTranscriptButton, scrapeTranscript } from "@/lib/scrapTranscript";
 
 export default defineContentScript({
   matches: ['*://*.youtube.com/watch*'],

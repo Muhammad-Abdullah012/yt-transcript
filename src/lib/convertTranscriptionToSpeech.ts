@@ -1,11 +1,8 @@
-import { TranscriptSegment } from "@/interfaces";
-
-export const convertTranscriptionToSpeechInUserLangugage = async (transcriptions: TranscriptSegment[], language: string) => {
+export const convertTranscriptionToSpeechInUserLangugage = async (transcriptions: string, language: string) => {
     console.log("transcriptions", transcriptions);
     console.log("language", language);
 
     const audioContent = await getDummyAudio();
-    console.log("audioContent", audioContent);
     return audioContent;
 }
 

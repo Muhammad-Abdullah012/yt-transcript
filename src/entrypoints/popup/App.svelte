@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { ACTION } from "../../constants";
   import { formatTranscript } from "@/lib/scrapTranscript";
+  import { AudioQueueManager } from "@/lib/audioQueueManager";
+  import { audioQueueStore } from '@/lib/audioQueueManager';
 
   interface TranscriptSegment {
     timestamp: string;
@@ -9,9 +11,21 @@
   }
 
   let transcription: TranscriptSegment[] | null = null;
+  let isPlayingAudio = false;
+  let audioPort: Browser.runtime.Port | null = null;
+  const audioQueue = new AudioQueueManager();
   let isLoading = false;
   let errorMessage: string | null = null;
   let currentTabId: number | null = null;
+
+  function playFullQueue() {
+    if (!transcription || isPlayingAudio) return;
+    startStreamingAudio();
+  }
+
+  function playIndividualAudio(index: number) {
+    audioQueue.playIndividual(index);
+  }
 
   onMount(async () => {
     try {
@@ -69,7 +83,6 @@
       }
     } catch (error: any) {
       console.error("Error sending message or receiving response:", error);
-      // Check for common errors
       if (
         error.message?.includes("Could not establish connection") ||
         error.message?.includes("Receiving end does not exist")
@@ -83,6 +96,48 @@
     } finally {
       isLoading = false;
     }
+  }
+
+  function startStreamingAudio() {
+    if (!transcription || isPlayingAudio) return;
+
+    isPlayingAudio = true;
+    errorMessage = null;
+
+    // Clean up any previous port
+    if (audioPort) {
+      audioPort.disconnect();
+      audioPort = null;
+    }
+
+    // Connect to background
+    audioPort = browser.runtime.connect();
+    audioPort.postMessage({
+      action: ACTION.START_AUDIO_STREAM,
+      payload: {
+        transcription,
+        language: "en-US",
+      },
+    });
+
+    // Listen for audio chunks
+    audioPort.onMessage.addListener((msg) => {
+      if (msg.type === ACTION.AUDIO_CHUNK) {
+        console.log("Received chunk", msg.index);
+        audioQueue.add(msg.audioContent, msg.text);
+      } else if (msg.type === ACTION.STREAM_COMPLETE) {
+        console.log("All audio chunks received.");
+        isPlayingAudio = false;
+      } else if (msg.type === ACTION.ERROR) {
+        console.error("Error in audio stream:", msg);
+        isPlayingAudio = false;
+      }
+    });
+
+    audioPort.onDisconnect.addListener(() => {
+      console.log("Background port disconnected");
+      isPlayingAudio = false;
+    });
   }
 </script>
 
@@ -107,6 +162,26 @@
       <textarea class="message transcript-area" readonly
         >{formatTranscript(transcription)}</textarea
       >
+      <button
+        on:click={playFullQueue}
+        disabled={isPlayingAudio || isLoading}
+      >
+        {#if isLoading}
+          Playing...
+        {:else}
+          Play Audio
+        {/if}
+      </button>
+      <ul>
+        {#each $audioQueueStore as { text, index }}
+          <li>
+            <button on:click={() => playIndividualAudio(index)}>
+              Play Segment {index + 1}
+            </button>
+            <span>{text}</span>
+          </li>
+        {/each}
+      </ul>
     {/if}
 
     {#if !currentTabId && !errorMessage}
