@@ -40,10 +40,9 @@ export default defineContentScript({
                 console.log("Transcript detected via MutationObserver.");
                 transcriptFound = true;
                 observer.disconnect();
-                const formatted = formatTranscript(transcriptData);
                 sendResponse({
                   action: ACTION.TRANSCRIPTION_RESULT,
-                  payload: formatted
+                  payload: transcriptData
                 });
               }
             };
@@ -58,10 +57,9 @@ export default defineContentScript({
               if (initialData) {
                 console.log("Transcript found on initial check.");
                 transcriptFound = true;
-                const formatted = formatTranscript(initialData);
                 sendResponse({
                   action: ACTION.TRANSCRIPTION_RESULT,
-                  payload: formatted
+                  payload: initialData
                 });
               } else {
                 console.log("Transcript not found initially, starting MutationObserver...");

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ACTION } from '../../constants'; // Adjust path if needed
+  import { formatTranscript } from '@/lib/scrapTranscript';
 
   let transcription: string | null = null;
   let isLoading = false;
@@ -49,7 +50,7 @@
       console.log("Response received from content script:", response);
 
       if (response?.action === ACTION.TRANSCRIPTION_RESULT) {
-        transcription = response.payload;
+        transcription = formatTranscript(response.payload);
       } else if (response?.action === ACTION.TRANSCRIPTION_ERROR) {
         errorMessage = `Error: ${response.payload}`;
       } else {
