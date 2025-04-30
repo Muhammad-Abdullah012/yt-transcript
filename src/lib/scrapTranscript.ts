@@ -1,7 +1,4 @@
-interface TranscriptSegment {
-    timestamp: string;
-    text: string;
-}
+import { TranscriptSegment } from "@/interfaces";
 
 export const clickTranscriptButton = () => {
     const button = document.querySelector('button[aria-label="Show transcript"]') as HTMLButtonElement | null;
