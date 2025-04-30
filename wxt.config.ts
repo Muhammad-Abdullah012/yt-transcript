@@ -7,4 +7,5 @@ export default defineConfig({
     permissions: ["activeTab", "tabs"],
   },
   modules: ['@wxt-dev/module-svelte'],
+  entrypointsDir: "entrypoints",
 });
