@@ -116,7 +116,7 @@ export class AudioQueueManager {
      * @param text Associated transcript text.
      */
     add(base64Data: string, text: string) {
-        const audioUrl = `data:audio/wav;base64,${base64Data}`;
+        const audioUrl = base64Data;
         const audio = new Audio(audioUrl);
         const newItem = { audio, text, url: audioUrl };
 
