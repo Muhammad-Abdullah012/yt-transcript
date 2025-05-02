@@ -2,8 +2,7 @@
   import { onMount } from "svelte";
   import { ACTION } from "../../constants";
   import { formatTranscript } from "@/lib/scrapTranscript";
-  import { AudioQueueManager } from "@/lib/audioQueueManager";
-  import { audioQueueStore } from '@/lib/audioQueueManager';
+  import { AudioQueueManager, individualAudioQueueStore } from "@/lib/audioQueueManager";
 
   interface TranscriptSegment {
     timestamp: string;
@@ -17,6 +16,8 @@
   let isLoading = false;
   let errorMessage: string | null = null;
   let currentTabId: number | null = null;
+  let isDownloading = false;
+  let downloadError: string | null = null
 
   function playFullQueue() {
     if (!transcription || isPlayingAudio) return;
@@ -139,13 +140,51 @@
       isPlayingAudio = false;
     });
   }
+
+  async function downloadAudio() {
+    // Use hasAnyAudio to check if there's anything to download
+    if (!audioQueue.hasAnyAudio() || isDownloading) {
+      return;
+    }
+
+    isDownloading = true;
+    downloadError = null; // Reset error on new attempt
+
+    try {
+      // --- IMPORTANT: Await the Promise returned by getFullAudio ---
+      const blob = await audioQueue.getFullAudio();
+
+      if (blob.size === 0) {
+          console.warn("No audio data generated or fetched.");
+          downloadError = "No audio data available to download.";
+          return; // Exit if the blob is empty
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'full_audio.wav';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+    } catch (error) {
+      console.error("Error downloading audio:", error);
+      downloadError = "Failed to prepare audio for download.";
+      
+    } finally {
+      isDownloading = false;
+    }
+  }
+  $: canDownload = $individualAudioQueueStore.length > 0;
 </script>
 
 <main>
   <h1>YouTube Transcript</h1>
   <div class="card">
     {#if currentTabId}
-      <button on:click={getTranscription} disabled={isLoading}>
+      <button onclick={getTranscription} disabled={isLoading}>
         {#if isLoading}
           Loading...
         {:else}
@@ -163,7 +202,7 @@
         >{formatTranscript(transcription)}</textarea
       >
       <button
-        on:click={playFullQueue}
+        onclick={playFullQueue}
         disabled={isPlayingAudio || isLoading}
       >
         {#if isLoading}
@@ -172,11 +211,26 @@
           Play Audio
         {/if}
       </button>
+      <button
+        onclick={() => isPlayingAudio = false}
+        disabled={!isPlayingAudio}
+      >
+        Pause Audio
+      </button>
+      <button
+        onclick={downloadAudio}
+        disabled={!canDownload || isDownloading}
+      >
+        Download Full Audio
+      </button>
       <ul>
-        {#each $audioQueueStore as { text, index }}
+        {#each $individualAudioQueueStore as { text, index }}
           <li>
-            <button on:click={() => playIndividualAudio(index)}>
+            <button onclick={() => playIndividualAudio(index)}>
               Play Segment {index + 1}
+            </button>
+            <button onclick={() => audioQueue.pauseIndividual(index)}>
+              Pause Segment {index + 1}
             </button>
             <span>{text}</span>
           </li>
