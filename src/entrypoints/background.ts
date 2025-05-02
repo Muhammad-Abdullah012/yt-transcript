@@ -1,6 +1,9 @@
 import { ACTION } from "@/constants";
+import { GEMINI_API_KEY } from "@/constants/keys";
 import { TranscriptSegment } from "@/interfaces";
+import { generateContentWithGemini } from "@/lib/callGemini";
 import { convertTranscriptionToSpeechInUserLangugage } from "@/lib/convertTranscriptionToSpeech";
+import { formatTranscript, parseTranscript } from "@/lib/scrapTranscript";
 
 export default defineBackground(() => {
   console.log('Hello background!', { id: browser.runtime.id });
@@ -10,11 +13,13 @@ export default defineBackground(() => {
         const { transcription, language } = msg.payload as { transcription: TranscriptSegment[], language: string };
 
         console.log("transcription length", transcription.length);
-
-        for (let i = 0; i < transcription.length; i++) {
+        const translated = await generateContentWithGemini(GEMINI_API_KEY, formatTranscript(transcription), language)
+        console.log("translated", translated);
+        const parsedTranslation = parseTranscript(translated)
+        for (let i = 0; i < parsedTranslation.length; i++) {
           console.log("running for", i);
           try {
-            const segment = transcription[i];
+            const segment = parsedTranslation[i];
             const { audioContent } = await convertTranscriptionToSpeechInUserLangugage(segment.text, language);
 
             // Send chunk via port

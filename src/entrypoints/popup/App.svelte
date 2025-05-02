@@ -135,7 +135,7 @@
       action: ACTION.START_AUDIO_STREAM,
       payload: {
         transcription,
-        language: "en-US", // Or make dynamic if needed
+        language: "Italian", // Or make dynamic if needed
       },
     });
 

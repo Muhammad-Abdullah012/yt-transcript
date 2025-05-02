@@ -22,7 +22,7 @@ export async function generateContentWithGemini(
 
   const apiUrl = `${GEMINI_API_URL}/${modelId}:generateContent?key=${apiKey}`;
 
-  const prompt = `Translate the following text to ${targetLanguage}. Output only the translated text, without any introductory phrases or explanations or addition to text:\n\n"${inputText}"`;
+  const prompt = `Translate the following text to ${targetLanguage}. Output only the translated text, without any introductory phrases or explanations or addition to text (keep the time as is, return the same format but translated):\n\n"${inputText}"`;
 
   const requestBody: GeminiRequest = {
     contents: [
