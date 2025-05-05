@@ -1,29 +1,32 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { ACTION } from "../../constants";
-  import { formatTranscript } from "@/lib/scrapTranscript";
-  import {
-    AudioQueueManager,
-    individualAudioQueueStore,
-    playbackStateStore,
-   } from "@/lib/audioQueueManager";
+  import type { TranscriptSegment, SyncStatus } from "@/interfaces"; // Import interfaces
+  import { formatTranscript } from "@/lib/scrapTranscript"; // For optional display
 
-  interface TranscriptSegment {
-    timestamp: string;
-    text: string;
-  }
-
+  // --- Core State ---
   let transcription: TranscriptSegment[] | null = null;
-  
-  let audioPort: Browser.runtime.Port | null = null;
-  const audioQueue = new AudioQueueManager(); // Instantiate the manager
-  let isLoadingTranscription = false; // More specific loading state
-  let isStreamingAudio = false; // Tracks if background is sending chunks
+  let isLoadingTranscription = false;
   let errorMessage: string | null = null;
   let currentTabId: number | null = null;
-  let isDownloading = false;
-  let downloadError: string | null = null;
+  let selectedLanguage = "Italian"; // Default language
 
+  // --- Sync Playback State ---
+  let syncState: SyncStatus['state'] = 'stopped';
+  let syncMessage: string | null = null;
+  let currentSyncSegmentIndex: number = -1;
+
+  // --- Download State ---
+  let downloadState: 'idle' | 'preparing' | 'ready' | 'merging' | 'downloading' | 'error' = 'idle';
+  let downloadPrepProgress = { current: 0, total: 0 };
+  let downloadError: string | null = null;
+  let downloadDataUrl: string | null = null; // Stores merged audio data URL
+
+  // --- Communication Port ---
+  let audioPort: Browser.runtime.Port | null = null;
+  let portError: string | null = null;
+
+  // --- Lifecycle ---
   onMount(async () => {
     try {
       const tabs = await browser.tabs.query({
@@ -35,321 +38,396 @@
       if (tabs.length > 0 && tabs[0]?.id) {
         currentTabId = tabs[0].id;
         console.log("Popup opened on YouTube tab:", currentTabId);
+        // Listen for status updates from content script
+        browser.runtime.onMessage.addListener(handleRuntimeMessages);
       } else {
         errorMessage = "Not on an active YouTube video page.";
-        console.log("Popup not opened on an active YouTube watch page.");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error querying tabs:", error);
-      errorMessage = "Error finding YouTube tab. Check console.";
+      errorMessage = `Error finding YouTube tab: ${error.message}`;
     }
   });
 
   onDestroy(() => {
-    if (audioPort) {
-      audioPort.disconnect();
-      audioPort = null;
-    }
-    // Optional: Stop audio if popup closes during playback
-    // audioQueue.stop();
-    // Consider if you want audio to continue if popup is closed briefly
+    browser.runtime.onMessage.removeListener(handleRuntimeMessages);
+    disconnectPort(); // Ensure port is closed
+    console.log("Popup destroyed, listener removed, port disconnected.");
   });
 
-  // --- Transcription ---
+  // --- Message Handling ---
+  function handleRuntimeMessages(message: any, sender: Browser.runtime.MessageSender) {
+      // Handle messages from Content Script
+      if (sender.tab?.id === currentTabId) {
+          if (message.action === ACTION.SYNC_STATUS_UPDATE) {
+              console.log("Popup received SYNC_STATUS_UPDATE:", message.payload);
+              const { state, message: msg, segmentIndex, error } = message.payload as SyncStatus;
+              syncState = state ?? syncState;
+              syncMessage = msg ?? error ?? (state === 'stopped' ? 'Sync stopped.' : null); // Provide default stopped message
+              currentSyncSegmentIndex = segmentIndex ?? -1;
+              if (state === 'error') errorMessage = `Sync Error: ${msg || 'Unknown error'}`;
+              // Clear other errors if sync becomes active/ready
+              if (syncState !== 'error' && syncState !== 'stopped') {
+                  errorMessage = null;
+                  portError = null;
+                  downloadError = null;
+              }
+          } else if (message.action === ACTION.TRANSCRIPTION_RESULT) {
+              console.log("Popup received TRANSCRIPTION_RESULT");
+              isLoadingTranscription = false;
+              transcription = message.payload;
+              errorMessage = null;
+              resetDownloadState(); // Reset download if new transcript arrives
+          } else if (message.action === ACTION.TRANSCRIPTION_ERROR) {
+              console.error("Popup received TRANSCRIPTION_ERROR:", message.payload);
+              isLoadingTranscription = false;
+              errorMessage = `Transcript Error: ${message.payload}`;
+              transcription = null;
+              resetDownloadState();
+          }
+      }
+      // Ignore messages from other tabs or background for this listener
+  }
+
+  function handlePortMessage(msg: any) {
+      if (!audioPort) return; // Port closed
+
+      // console.log("Port message received:", msg.type); // Can be noisy
+
+      if (msg.type === ACTION.AUDIO_CHUNK) {
+          downloadState = 'preparing';
+          downloadPrepProgress = { current: msg.index + 1, total: msg.total };
+      } else if (msg.type === ACTION.STREAM_COMPLETE) {
+          console.log("Port audio stream complete (download prep finished).");
+          downloadState = 'ready'; // Ready to merge
+          downloadPrepProgress.current = downloadPrepProgress.total; // Ensure progress shows 100%
+      } else if (msg.type === ACTION.MERGE_AUDIO_RESULT) {
+          if (msg.error) {
+              console.error("Error merging audio:", msg.error);
+              downloadError = `Merge failed: ${msg.error}`;
+              downloadState = 'error';
+          } else {
+              console.log("Audio merge successful.");
+              downloadDataUrl = msg.payload; // Store the data URL
+              downloadState = 'downloading'; // Trigger download effect
+              // Initiate download immediately after receiving data URL
+              if(!downloadDataUrl) {
+                  console.error("No data URL received for download.");
+                  downloadError = "Download failed: No audio data received.";
+                  downloadState = 'error';
+                  return;
+              }
+              triggerDownload(downloadDataUrl);
+              // Reset state after a short delay?
+              setTimeout(() => {
+                  if (downloadState === 'downloading') {
+                      downloadState = 'ready'; // Go back to ready state after download starts
+                  }
+              }, 1500);
+          }
+      } else if (msg.type === ACTION.ERROR) {
+          console.error("Error from background port stream:", msg.error);
+          portError = `Audio Stream Error: ${msg.error}`;
+          downloadError = `Audio generation failed: ${msg.error}`; // Show as download error
+          downloadState = 'error';
+          disconnectPort(); // Disconnect on stream error
+      }
+  }
+
+  function handlePortDisconnect() {
+      if (!audioPort) return; // Already handled
+      const portId = audioPort.name;
+      console.log(`Background port ${portId} disconnected.`);
+      // If disconnect was unexpected during prep/merge
+      if (downloadState === 'preparing' || downloadState === 'merging') {
+          console.warn("Port disconnected unexpectedly during download process.");
+          if (!downloadError) downloadError = "Connection lost during audio processing.";
+          downloadState = 'error';
+      }
+      audioPort = null; // Clear the port reference
+      portError = null; // Clear port-specific error
+  }
+
+  function connectPort(purpose: string = 'audio-download'): boolean {
+      if (audioPort) {
+          console.warn("Port already connected. Disconnecting old one.");
+          disconnectPort();
+      }
+      try {
+          console.log(`Connecting port for: ${purpose}`);
+          // Include purpose in name for better debugging in background
+          const portName = `${purpose}_${Date.now()}`;
+          audioPort = browser.runtime.connect({ name: portName });
+          audioPort.onMessage.addListener(handlePortMessage);
+          audioPort.onDisconnect.addListener(handlePortDisconnect);
+          portError = null; // Clear previous errors on new connection
+          return true;
+      } catch (error: any) {
+          console.error("Error connecting port:", error);
+          portError = `Connection Error: ${error.message}`;
+          audioPort = null;
+          return false;
+      }
+  }
+
+  function disconnectPort() {
+      if (audioPort) {
+          // console.log("Disconnecting port from popup.");
+          audioPort.onMessage.removeListener(handlePortMessage);
+          audioPort.onDisconnect.removeListener(handlePortDisconnect);
+          audioPort.disconnect();
+          audioPort = null;
+      }
+  }
+
+  // --- Actions ---
+
   async function getTranscription() {
-    if (!currentTabId) {
-      errorMessage = "Cannot find the active YouTube tab.";
-      return;
-    }
+    if (!currentTabId || isLoadingTranscription) return;
 
     isLoadingTranscription = true;
     errorMessage = null;
+    portError = null;
+    syncMessage = null;
     transcription = null;
-    audioQueue.clearAllAudio(); // Clear previous audio if getting new transcript
+    syncState = 'stopped';
+    resetDownloadState(); // Reset download state
+    disconnectPort(); // Disconnect any existing port
 
     console.log(`Sending ${ACTION.GET_TRANSCRIPTION} to tab ${currentTabId}`);
-
     try {
-      const response = await browser.tabs.sendMessage(currentTabId, {
-        action: ACTION.GET_TRANSCRIPTION,
-      });
-
-      console.log("Response received from content script:", response);
-
-      if (response?.action === ACTION.TRANSCRIPTION_RESULT) {
-        transcription = response.payload;
-        // Automatically start streaming after getting transcript? Or keep separate?
-        // Let's keep it separate for now via the "Play Full Audio" button.
-      } else if (response?.action === ACTION.TRANSCRIPTION_ERROR) {
-        errorMessage = `Error: ${response.payload}`;
-      } else {
-        errorMessage = response
-          ? "Received an unexpected response from content script."
-          : "No response from content script. Try reloading the YouTube page and the extension.";
-        console.error("Unexpected response:", response);
-      }
+      await browser.tabs.sendMessage(currentTabId, { action: ACTION.GET_TRANSCRIPTION });
+      // Wait for TRANSCRIPTION_RESULT or TRANSCRIPTION_ERROR via handleRuntimeMessages
     } catch (error: any) {
-      console.error("Error sending message or receiving response:", error);
-      if (
-        error.message?.includes("Could not establish connection") ||
-        error.message?.includes("Receiving end does not exist")
-      ) {
-        errorMessage =
-          "Cannot connect to the YouTube page. Please reload the page and try again. If the issue persists, reload the extension.";
-      } else {
-        errorMessage = `Error: ${error.message || "An unknown error occurred."}`;
-      }
-      transcription = null;
-    } finally {
+      console.error("Error sending GET_TRANSCRIPTION:", error);
+      errorMessage = `Error contacting content script: ${error.message}. Try reloading the page/extension.`;
       isLoadingTranscription = false;
     }
   }
 
-  function requestAudioStream() {
-    if (!transcription || isStreamingAudio || $playbackStateStore !== 'stopped') return; // Don't start if already streaming/playing/paused
-
-    isStreamingAudio = true; // Indicate that we are waiting for chunks
-    errorMessage = null;
-    audioQueue.clearAllAudio(); // Clear any previous state before starting fresh
-
-    // Clean up any previous port
-    if (audioPort) {
-      audioPort.disconnect();
-    }
-
-    // Connect to background
-    console.log("Connecting to background script for audio stream...");
-    audioPort = browser.runtime.connect(); // Assumes default connection (to background)
-
-    // Handle potential connection errors immediately
-    if (browser.runtime.lastError) {
-        console.error("Error connecting to background:", browser.runtime.lastError.message);
-        errorMessage = `Connection Error: ${browser.runtime.lastError.message}`;
-        isStreamingAudio = false;
-        audioPort = null;
+  function startSyncPlayback() {
+    if (!currentTabId || !transcription) {
+        errorMessage = "Get transcription first.";
         return;
     }
+    if (syncState === 'loading' || syncState === 'playing' || syncState === 'paused') return;
 
+    console.log("Requesting START_SYNC_PLAYBACK from content script");
+    // Optimistically set state, content script update will confirm/correct
+    syncState = 'loading';
+    syncMessage = "Initializing sync...";
+    errorMessage = null;
+    portError = null;
+    downloadError = null; // Clear download errors when starting sync
 
-    audioPort.postMessage({
-      action: ACTION.START_AUDIO_STREAM,
-      payload: {
-        transcription,
-        language: "Italian", // Or make dynamic if needed
-      },
+    browser.tabs.sendMessage(currentTabId, {
+      action: ACTION.START_SYNC_PLAYBACK,
+      payload: { language: selectedLanguage }
+    }).catch(err => {
+        console.error("Error sending START_SYNC_PLAYBACK:", err);
+        errorMessage = `Error starting sync: ${err.message}`;
+        syncState = 'error'; // Revert state on send error
     });
-
-    // Listen for messages
-    audioPort.onMessage.addListener(handleAudioMessage);
-    audioPort.onDisconnect.addListener(handleAudioDisconnect);
   }
 
-  function handleAudioMessage(msg: any) {
-      if (!audioPort) return; // Port might have disconnected
+  function stopSyncPlayback() {
+    if (!currentTabId || syncState === 'stopped') return;
 
-      if (msg.type === ACTION.AUDIO_CHUNK) {
-        console.log("Received chunk", msg.index);
-        // Add the chunk. Playback won't start automatically here.
-        audioQueue.add(msg.audioContent, msg.text);
-        
-        if (msg.index === 0 && $playbackStateStore === 'stopped') {
-           audioQueue.play();
-        }
-      } else if (msg.type === ACTION.STREAM_COMPLETE) {
-        console.log("All audio chunks received.");
-        isStreamingAudio = false; // Streaming finished
-        // Playback continues via the AudioQueueManager's internal logic
-        // Disconnect the port now that the stream is complete
-        if (audioPort) {
-            audioPort.disconnect();
-            audioPort = null;
-        }
-      } else if (msg.type === ACTION.ERROR) {
-        console.error("Error message from background audio stream:", msg.payload);
-        errorMessage = `Audio Stream Error: ${msg.payload}`;
-        isStreamingAudio = false;
-        audioQueue.stop(); // Stop playback on error
-        if (audioPort) {
-            audioPort.disconnect();
-            audioPort = null;
-        }
-      }
+    console.log("Requesting STOP_SYNC_PLAYBACK from content script");
+    syncState = 'stopped'; // Assume stop succeeds
+    syncMessage = "Sync stopped.";
+    currentSyncSegmentIndex = -1;
+
+    browser.tabs.sendMessage(currentTabId, { action: ACTION.STOP_SYNC_PLAYBACK })
+      .catch(err => {
+        console.error("Error sending STOP_SYNC_PLAYBACK:", err);
+        errorMessage = `Error stopping sync: ${err.message}`;
+        // State might be inconsistent if message fails, but UI shows stopped
+    });
   }
 
- function handleAudioDisconnect() {
-    if (!audioPort) return; // Already handled disconnect
-    console.log("Background port disconnected.");
-     // Check if disconnect was expected (e.g., after STREAM_COMPLETE) or unexpected
-    if (isStreamingAudio) {
-        console.warn("Audio port disconnected unexpectedly during streaming.");
-        errorMessage = "Audio stream interrupted unexpectedly.";
-        audioQueue.stop(); // Stop playback if stream was cut short
-    }
-    isStreamingAudio = false;
-    audioPort = null; // Clear the port reference
- }
-
-  // Combined Play/Pause/Resume handler for the main button
-  function toggleFullPlayback() {
-    const currentState = $playbackStateStore;
-
-    if (currentState === 'playing') {
-      audioQueue.pause();
-    } else if (currentState === 'paused') {
-      audioQueue.play(); // Resume
-    } else if (currentState === 'stopped') {
-      // If stopped, check if we need to request the stream first
-      if ($individualAudioQueueStore.length === 0 && transcription) {
-         // Need to get the audio first, then play
-         requestAudioStream();
-         // We need a slight delay or a mechanism to start play()
-         // once the first chunk arrives. Let's modify handleAudioMessage.
-         // For simplicity now, let's assume user clicks again after loading.
-         // A better UX would auto-play after loading finishes.
-         // Let's refine: Start stream, then immediately call play.
-         // The manager will wait for the first chunk if needed.
-         requestAudioStream(); // Request the stream
-         // Set a flag or use a promise to know when the first chunk is added?
-         // Let's try calling play directly. The manager should handle it.
-         audioQueue.play(); // Attempt to start playback
-
-      } else if ($individualAudioQueueStore.length > 0) {
-         // Audio already loaded, just play from beginning
-         audioQueue.play();
-      }
-    }
-  }
-
-  // --- Individual Segment Control ---
-  function playIndividualAudio(index: number) {
-    // Pauses the main queue automatically within playIndividual
-    audioQueue.playIndividual(index);
-  }
-
-  function pauseIndividualAudio(index: number) {
-    audioQueue.pauseIndividual(index);
-  }
-
-  // --- Download ---
-  async function downloadAudio() {
-    if (!audioQueue.hasAnyAudio() || isDownloading) {
-      return;
-    }
-
-    isDownloading = true;
-    downloadError = null;
-
-    try {
-      const blob = await audioQueue.getFullAudio(); // Await the promise
-
-      if (blob.size === 0) {
-          console.warn("No audio data generated or fetched for download.");
-          downloadError = "No audio data available to download.";
+  function prepareDownloadAudio() {
+      if (!currentTabId || !transcription || downloadState === 'preparing' || downloadState === 'merging') return;
+      if (syncState !== 'stopped') {
+          downloadError = "Stop synchronized playback before preparing download.";
           return;
       }
 
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      // Suggest a filename based on video title later?
-      a.download = 'youtube_transcript_audio.wav';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      console.log("Requesting audio preparation for download...");
+      resetDownloadState(); // Clear previous download state/errors
+      downloadState = 'preparing';
+      downloadPrepProgress = { current: 0, total: 0 };
 
-    } catch (error) {
-      console.error("Error downloading audio:", error);
-      downloadError = "Failed to prepare audio for download. Check console.";
-    } finally {
-      isDownloading = false;
-    }
+      if (!connectPort('audio-download-prep')) {
+          downloadState = 'error';
+          downloadError = portError || "Failed to connect to background service.";
+          return;
+      }
+
+      // Send request to background via port
+      audioPort?.postMessage({
+          action: ACTION.START_AUDIO_STREAM,
+          payload: {
+              transcription,
+              language: selectedLanguage,
+          },
+      });
+  }
+
+  function requestMergeAndDownload() {
+      if (downloadState !== 'ready' || !audioPort) {
+          downloadError = "Audio not ready or connection lost. Please 'Load Audio' again.";
+          if (downloadState !== 'error') downloadState = 'idle'; // Reset if not already error
+          return;
+      }
+
+      console.log("Requesting audio merge from background...");
+      downloadState = 'merging';
+      downloadError = null;
+
+      audioPort.postMessage({ action: ACTION.MERGE_PORT_AUDIO });
+      // Wait for MERGE_AUDIO_RESULT in handlePortMessage
+  }
+
+  function triggerDownload(dataUrl: string) {
+      try {
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          // Suggest filename based on language and maybe video title later
+          a.download = `youtube_translation_${selectedLanguage.toLowerCase()}.wav`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          // Data URLs don't need URL.revokeObjectURL
+          console.log("Download triggered.");
+      } catch (error: any) {
+           console.error("Error triggering download:", error);
+           downloadError = `Failed to initiate download: ${error.message}`;
+           downloadState = 'error';
+      }
+  }
+
+  function resetDownloadState() {
+      downloadState = 'idle';
+      downloadError = null;
+      downloadPrepProgress = { current: 0, total: 0 };
+      downloadDataUrl = null;
+      // Don't disconnect port here, might be needed if user retries quickly
   }
 
   // --- Reactive Computations ---
-  $: hasAudioSegments = $individualAudioQueueStore.length > 0;
   $: canGetTranscription = !isLoadingTranscription && !!currentTabId;
-  $: canControlPlayback = hasAudioSegments || (transcription && !isStreamingAudio); // Can start if transcript exists
-  $: canDownload = hasAudioSegments && !isDownloading;
+  $: canControlSync = !!transcription && !!currentTabId && !isLoadingTranscription;
+  $: canStartSync = canControlSync && syncState !== 'playing' && syncState !== 'paused' && syncState !== 'loading';
+  $: canStopSync = canControlSync && (syncState === 'playing' || syncState === 'paused' || syncState === 'ready' || syncState === 'error');
 
-  $: playButtonText =
-    $playbackStateStore === 'playing' ? 'Pause Full Audio' :
-    $playbackStateStore === 'paused' ? 'Resume Full Audio' :
-    'Play Full Audio';
+  $: canPrepareDownload = !!transcription && !!currentTabId && syncState === 'stopped' && downloadState !== 'preparing' && downloadState !== 'merging';
+  $: canDownloadNow = downloadState === 'ready'; // Only allow merge request when ready
+
+  $: syncStatusText =
+      syncState === 'loading' ? (syncMessage || 'Loading audio...') :
+      syncState === 'playing' ? `Playing ${currentSyncSegmentIndex >= 0 ? `segment ${currentSyncSegmentIndex + 1}` : '...'}` + (syncMessage ? ` (${syncMessage})` : '') :
+      syncState === 'paused' ? `Paused ${currentSyncSegmentIndex >= 0 ? `at segment ${currentSyncSegmentIndex + 1}` : ''}` + (syncMessage ? ` (${syncMessage})` : '') :
+      syncState === 'ready' ? (syncMessage || 'Audio ready for sync') :
+      syncState === 'error' ? `Error: ${syncMessage || 'Unknown error'}` :
+      syncState === 'stopped' ? (syncMessage || 'Sync stopped.') :
+      'Sync Idle';
+
+  $: downloadButtonText =
+      downloadState === 'idle' ? 'Download Audio' :
+      downloadState === 'preparing' ? `Loading ${downloadPrepProgress.current}/${downloadPrepProgress.total}...` :
+      downloadState === 'ready' ? 'Download Now' : // Changed from 'Download Audio'
+      downloadState === 'merging' ? 'Merging Audio...' :
+      downloadState === 'downloading' ? 'Downloading...' :
+      downloadState === 'error' ? 'Retry Download Prep' : // Or just 'Download Audio'
+      'Download Audio';
+
+  $: isDownloadProcessActive = downloadState === 'preparing' || downloadState === 'merging' || downloadState === 'downloading';
 
 </script>
 
 <main>
-  <h1>YouTube Transcript & Audio</h1>
+  <h1>YouTube Sync Translator</h1>
   <div class="card">
     {#if currentTabId}
-      <button onclick={getTranscription} disabled={!canGetTranscription}>
+      <!-- Language Selector -->
+      <div class="setting">
+          <label for="language-select">Language:</label>
+          <select id="language-select" bind:value={selectedLanguage} disabled={syncState !== 'stopped' || isLoadingTranscription || isDownloadProcessActive}>
+              <option value="Italian">Italian</option>
+              <!-- <option value="Spanish">Spanish</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Portuguese">Portuguese</option> -->
+              <!-- Add more supported languages -->
+          </select>
+      </div>
+
+      <!-- Get Transcription Button -->
+      <button class="action-button" onclick={getTranscription} disabled={!canGetTranscription || syncState !== 'stopped'}>
         {#if isLoadingTranscription}
           Loading Transcript...
         {:else}
-          Get Transcription
+          Get YouTube Transcript
         {/if}
       </button>
     {:else if !errorMessage}
-      <p class="message info">
-        Open a YouTube video page to use this extension.
-      </p>
+      <p class="message info">Open a YouTube video page to use this extension.</p>
     {/if}
 
+    <!-- General Error Display -->
     {#if errorMessage}
       <p class="message error">Error: {errorMessage}</p>
     {/if}
+    {#if portError}
+      <p class="message error small-error">Connection Error: {portError}</p>
+    {/if}
+
 
     {#if transcription}
-      <textarea class="message transcript-area" readonly
-        >{formatTranscript(transcription)}</textarea
-      >
-      <button
-        onclick={toggleFullPlayback}
-        disabled={!canControlPlayback || isStreamingAudio}
-        title={isStreamingAudio ? "Audio is currently loading..." : ""}
-      >
-        {#if isStreamingAudio}
-            Loading Audio...
-        {:else}
-            {playButtonText}
-        {/if}
-      </button>
+      <!-- Optional: Display formatted transcript -->
+      <!-- <textarea class="message transcript-area" readonly>{formatTranscript(transcription)}</textarea> -->
 
-      <!-- Download Button -->
-      <button
-        onclick={downloadAudio}
-        disabled={!canDownload}
-      >
-        {#if isDownloading}
-            Downloading...
-        {:else}
-            Download Full Audio (.wav)
-        {/if}
-      </button>
-       {#if downloadError}
-         <p class="message error small-error">Download Error: {downloadError}</p>
-       {/if}
+      <!-- Sync Controls -->
+      <div class="control-group">
+          <h2>Synchronized Playback</h2>
+          {#if syncState !== 'stopped' || syncMessage}
+             <p class="message {syncState === 'error' ? 'error' : (syncState === 'ready' || syncState === 'loading' ? 'info' : 'status')}">
+                 Status: {syncStatusText}
+             </p>
+          {/if}
+          <button class="action-button" onclick={startSyncPlayback} disabled={!canStartSync}>
+              Start Synced Playback
+          </button>
+          <button class="action-button" onclick={stopSyncPlayback} disabled={!canStopSync}>
+              Stop Synced Playback
+          </button>
+      </div>
 
-      <!-- Individual Segment List -->
-      {#if hasAudioSegments}
-        <h2>Individual Segments</h2>
-        <ul class="segment-list">
-          {#each $individualAudioQueueStore as { text, index }}
-            <li class="segment-item">
-               <div class="segment-controls">
-                 <button class="small-button" onclick={() => playIndividualAudio(index)} title="Play this segment">
-                   ▶ Play
-                 </button>
-                 <button class="small-button" onclick={() => pauseIndividualAudio(index)} title="Pause this segment">
-                   ❚❚ Pause
-                 </button>
-               </div>
-               <span class="segment-text">{index + 1}. {text}</span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
+      <!-- Download Controls -->
+      <div class="control-group">
+          <h2>Download Audio (WAV)</h2>
+          {#if syncState !== 'stopped'}
+              <p class="message info small-info">Stop synchronized playback to enable download.</p>
+          {/if}
+
+          <!-- Combined Load/Download Button -->
+          <button
+              class="action-button"
+              onclick={downloadState === 'ready' ? requestMergeAndDownload : prepareDownloadAudio}
+              disabled={syncState !== 'stopped' || isLoadingTranscription || (downloadState !== 'idle' && downloadState !== 'ready' && downloadState !== 'error')}
+              title={downloadState === 'ready' ? 'Merge generated audio and download' : 'Generate audio segments for download'}
+          >
+              {downloadButtonText}
+          </button>
+
+          {#if downloadError}
+              <p class="message error small-error">Download Error: {downloadError}</p>
+          {/if}
+          {#if downloadState === 'preparing'}
+              <progress max={downloadPrepProgress.total || 100} value={downloadPrepProgress.current}></progress>
+          {/if}
+      </div>
 
     {/if}
   </div>
@@ -359,27 +437,44 @@
   main {
     font-family: sans-serif;
     padding: 1em;
-    min-width: 350px; /* Slightly wider */
+    min-width: 350px;
     max-width: 500px;
+    color: #333;
   }
   .card {
     border: 1px solid #ccc;
     padding: 1em;
     border-radius: 4px;
+    background-color: #fff;
   }
-  button {
+  .setting {
+      margin-bottom: 0.8em;
+  }
+  label {
+       margin-right: 0.5em;
+       font-size: 0.9em;
+       font-weight: 500;
+   }
+  select {
+       padding: 0.4em;
+       border: 1px solid #ccc;
+       border-radius: 3px;
+       font-size: 0.9em;
+   }
+  .action-button, button { /* Style all buttons similarly */
     padding: 0.6em 1.2em;
     cursor: pointer;
-    margin: 0.5em 0.5em 0.5em 0; /* Add some spacing */
+    margin: 0.5em 0.5em 0.5em 0;
     border: 1px solid #aaa;
     border-radius: 4px;
-    /* background-color: #eee; */
+    background-color: #eee;
     font-size: 0.9rem;
+    transition: background-color 0.2s ease;
   }
-  button:hover:not(:disabled) {
-     /* background-color: #ddd; */
+  .action-button:hover:not(:disabled), button:hover:not(:disabled) {
+     background-color: #ddd;
   }
-  button:disabled {
+  .action-button:disabled, button:disabled {
     cursor: not-allowed;
     opacity: 0.6;
   }
@@ -389,18 +484,16 @@
     white-space: pre-wrap;
     word-wrap: break-word;
     font-size: 0.9em;
-    max-height: 250px;
-    overflow-y: auto;
     border: 1px solid #eee;
-    padding: 0.5em;
-    background-color: #f9f9f9;
-    color: #333;
+    padding: 0.6em 0.8em;
     border-radius: 3px;
   }
   .transcript-area {
     width: 95%;
-    min-height: 100px; /* Adjust as needed */
+    min-height: 80px;
     resize: vertical;
+    font-family: monospace;
+    font-size: 0.85em;
   }
   .error {
     color: #a94442;
@@ -409,55 +502,50 @@
   }
    .small-error {
       font-size: 0.8em;
-      padding: 0.3em;
-      margin-top: 0.2em;
+      padding: 0.3em 0.5em;
+      margin-top: 0.3em;
    }
   .info {
     color: #31708f;
-    background-color: #f0f0f0;
+    background-color: #d9edf7;
     border-color: #bce8f1;
   }
+   .small-info {
+       font-size: 0.8em;
+       padding: 0.3em 0.5em;
+       margin-top: 0.2em;
+       background-color: #f0f0f0;
+       border: none;
+   }
+   .status {
+      background-color: #f0f0f0;
+      border-color: #ddd;
+      color: #555;
+      font-weight: 500;
+   }
   h1, h2 {
       margin-top: 0;
       margin-bottom: 0.5em;
-      /* color: #333; */
+      color: #333;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 0.2em;
+  }
+  h1 {
+      font-size: 1.3em;
   }
   h2 {
       font-size: 1.1em;
-      border-top: 1px solid #eee;
-      padding-top: 0.8em;
+      margin-top: 1em; /* Space between groups */
+  }
+  .control-group {
+      /* border: 1px solid #eee; */
+      /* padding: 0.8em; */
       margin-top: 1em;
+      /* border-radius: 4px; */
   }
-  .segment-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      max-height: 200px; /* Limit list height */
-      overflow-y: auto;
-      border: 1px solid #eee;
-      border-radius: 3px;
-  }
-  .segment-item {
-      display: flex;
-      align-items: center;
-      padding: 0.4em 0.6em;
-      border-bottom: 1px solid #eee;
-      font-size: 0.85em;
-  }
-  .segment-item:last-child {
-      border-bottom: none;
-  }
-  .segment-controls {
-      margin-right: 0.8em;
-      flex-shrink: 0; /* Prevent controls from shrinking */
-  }
-  .segment-text {
-      flex-grow: 1;
-      word-break: break-word; /* Break long words if needed */
-  }
-  .small-button {
-      padding: 0.2em 0.5em;
-      font-size: 0.8em;
-      margin-right: 0.3em;
+  progress {
+      width: 100%;
+      margin-top: 0.5em;
+      height: 8px;
   }
 </style>

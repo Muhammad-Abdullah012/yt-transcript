@@ -4,7 +4,7 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   srcDir: 'src',
   manifest: {
-    permissions: ["activeTab", "tabs"],
+    permissions: ["activeTab", "tabs", "<all_urls>"],
   },
   modules: ['@wxt-dev/module-svelte'],
   entrypointsDir: "entrypoints",

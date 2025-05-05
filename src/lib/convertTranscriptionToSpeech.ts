@@ -50,7 +50,7 @@ const audioFiles = [
   "line_42_urd.wav",
   "line_43_urd.wav",
   "line_44_urd.wav",
-  "line_45_urd.wav",
+  // "line_45_urd.wav",
   "line_46_urd.wav",
   "line_47_urd.wav",
 ];
@@ -58,6 +58,7 @@ const audioFiles = [
 export const convertTranscriptionToSpeechInUserLangugage = async (
   transcriptions: string,
   language: string,
+  i: number,
 ) => {
   console.log("transcriptions", transcriptions);
   console.log("language", language);
@@ -70,23 +71,23 @@ export const convertTranscriptionToSpeechInUserLangugage = async (
   }
   console.log(`Processing text: "${transcriptions}" for language: ${language}`);
 
-  try {
+  // try {
     
-    console.log("Converting translated text to speech...");
-    const audioContent = await textToSpeechTalkify(
-      TALKIFY_API_KEY,
-      transcriptions,
-      "wav"
-    );
-    console.log(`Generated audio (base64 length: ${audioContent.length})`);
-    return { audioContent };
-  } catch (error) {
-    console.error(`Error processing segment "${transcriptions}":`, error);
-    // Re-throw the error to be caught by the background script loop
-    throw error;
-  }
-  // const audioContent = await getDummyAudio(i);
-  //   return audioContent;
+  //   console.log("Converting translated text to speech...");
+  //   const audioContent = await textToSpeechTalkify(
+  //     TALKIFY_API_KEY,
+  //     transcriptions,
+  //     "wav"
+  //   );
+  //   console.log(`Generated audio (base64 length: ${audioContent.length})`);
+  //   return { audioContent };
+  // } catch (error) {
+  //   console.error(`Error processing segment "${transcriptions}":`, error);
+  //   // Re-throw the error to be caught by the background script loop
+  //   throw error;
+  // }
+  const audioContent = await getDummyAudio(i);
+    return audioContent;
 };
 // multiple audio files for different transcription text.
 const getDummyAudio = async (i: number) => {

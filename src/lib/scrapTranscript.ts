@@ -1,4 +1,5 @@
 import { TranscriptSegment } from "@/interfaces";
+import { parseTimestampToSeconds } from "./utils";
 
 export const clickTranscriptButton = () => {
   const button = document.querySelector(
@@ -50,7 +51,7 @@ export const scrapeTranscript = (): TranscriptSegment[] | null => {
 
     if (text) {
       // Only add if there's actual text content
-      transcriptSegments.push({ timestamp, text });
+      transcriptSegments.push({ timestamp, text, startTime: parseTimestampToSeconds(timestamp) });
     }
   });
 
