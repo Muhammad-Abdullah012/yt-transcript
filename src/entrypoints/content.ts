@@ -43,6 +43,21 @@ export default defineContentScript({
       findVideoElement(); // Ensure we have the video element ref
     }
 
+    function playAudio(a: HTMLAudioElement) {
+      console.log("playAudio function called!");
+      if (videoElement && !videoElement.muted) {
+        const muteButton = document.querySelector(
+          `button.ytp-button[aria-label*="Mute"]`
+        ) as HTMLButtonElement;
+        if (muteButton) {
+          muteButton.click(); // Mute the video to avoid sound interference
+          console.log("Video muted to avoid sound interference.");
+        } else {
+          console.log("muteButton not found");
+        }
+      }
+      return a.play();
+    }
     function findVideoElement() {
       console.log("findVideoElement function called!");
       if (!videoElement || !document.body.contains(videoElement)) {
@@ -85,7 +100,6 @@ export default defineContentScript({
       }
     }
 
-
     function startSync() {
       console.log("startSync() function called!");
       findVideoElement(); // Make sure we have the latest video element ref
@@ -104,7 +118,10 @@ export default defineContentScript({
       //   return;
       // }
 
-      console.log("Starting synchronized playback...", " setting isSyncActive true in line 107");
+      console.log(
+        "Starting synchronized playback...",
+        " setting isSyncActive true in line 107"
+      );
       isSyncActive = true;
       initializeSyncComponents(); // Ensure audio element exists
       attachVideoListeners(); // Ensure listeners are attached
@@ -138,7 +155,10 @@ export default defineContentScript({
 
     function stopSync() {
       if (!isSyncActive) return;
-      console.log("Stopping synchronized playback...", " setting isSyncActive false in line 141");
+      console.log(
+        "Stopping synchronized playback...",
+        " setting isSyncActive false in line 141"
+      );
       isSyncActive = false;
       stopSyncInterval(); // Stop checking time
       if (audioElement) {
@@ -199,9 +219,9 @@ export default defineContentScript({
               e
             );
           }
-          audioElement
-            .play()
-            .catch((err) => handleAudioError(err, segmentIdentifier));
+          playAudio(audioElement).catch((err) =>
+            handleAudioError(err, segmentIdentifier)
+          );
         } else if (!shouldPlay && !audioElement.paused) {
           audioElement.pause();
         }
@@ -235,7 +255,7 @@ export default defineContentScript({
       audioElement.src = blobUrl;
       audioElement.load(); // Load the new source
 
-      const playPromise = audioElement.play();
+      const playPromise = playAudio(audioElement);
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
@@ -301,8 +321,6 @@ export default defineContentScript({
       console.log("Video Play Event");
       startSyncInterval(); // Start checking time
 
-      videoElement.muted = true;
-
       const currentTime = videoElement.currentTime;
       const targetIndex = findSegmentIndexForTime(currentTime, syncAudioData);
       const offset =
@@ -331,9 +349,9 @@ export default defineContentScript({
         } catch (e) {
           console.error("Error setting time on resume:", e);
         }
-        audioElement
-          .play()
-          .catch((err) => handleAudioError(err, `Seg ${currentSegmentIndex}`));
+        playAudio(audioElement).catch((err) =>
+          handleAudioError(err, `Seg ${currentSegmentIndex}`)
+        );
       } else if (
         targetIndex !== currentSegmentIndex ||
         !audioElement?.currentSrc
@@ -353,11 +371,9 @@ export default defineContentScript({
         );
         // Ensure audio is playing if video is playing
         if (audioElement?.paused) {
-          audioElement
-            .play()
-            .catch((err) =>
-              handleAudioError(err, `Seg ${currentSegmentIndex}`)
-            );
+          playAudio(audioElement).catch((err) =>
+            handleAudioError(err, `Seg ${currentSegmentIndex}`)
+          );
         }
       }
       sendStatusUpdate({ state: "playing", segmentIndex: currentSegmentIndex });
@@ -515,9 +531,9 @@ export default defineContentScript({
             }
             // Ensure it's playing
             if (audioElement.paused) {
-              audioElement
-                .play()
-                .catch((err) => handleAudioError(err, `Seg ${targetIndex}`));
+              playAudio(audioElement).catch((err) =>
+                handleAudioError(err, `Seg ${targetIndex}`)
+              );
             }
           } catch (e) {
             console.error(
@@ -655,7 +671,10 @@ export default defineContentScript({
 
       // --- SYNC_AUDIO_READY ---
       if (message.action === ACTION.SYNC_AUDIO_READY) {
-        console.log("Content Script: Received SYNC_AUDIO_READY", message.payload);
+        console.log(
+          "Content Script: Received SYNC_AUDIO_READY",
+          message.payload
+        );
         syncAudioData = message.payload as SegmentAudioData[];
         cleanupBlobUrls(); // Clean up any old URLs before potentially creating new ones
         console.log(
@@ -726,7 +745,7 @@ export default defineContentScript({
               action: ACTION.REQUEST_SYNC_AUDIO,
               payload: {
                 transcription: transcriptData,
-                language: language
+                language: language,
               },
             })
             .catch((err) => {
