@@ -101,6 +101,7 @@
           console.log("Port audio stream complete (download prep finished).");
           downloadState = 'ready'; // Ready to merge
           downloadPrepProgress.current = downloadPrepProgress.total; // Ensure progress shows 100%
+          requestMergeAndDownload();
       } else if (msg.type === ACTION.MERGE_AUDIO_RESULT) {
           if (msg.error) {
               console.error("Error merging audio:", msg.error);
@@ -414,7 +415,7 @@
           <!-- Combined Load/Download Button -->
           <button
               class="action-button"
-              onclick={downloadState === 'ready' ? requestMergeAndDownload : prepareDownloadAudio}
+              onclick={prepareDownloadAudio}
               disabled={syncState !== 'stopped' || isLoadingTranscription || (downloadState !== 'idle' && downloadState !== 'ready' && downloadState !== 'error')}
               title={downloadState === 'ready' ? 'Merge generated audio and download' : 'Generate audio segments for download'}
           >
