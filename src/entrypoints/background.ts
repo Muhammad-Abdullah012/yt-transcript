@@ -182,7 +182,7 @@ export default defineBackground(() => {
           const parsedTranslation = parseTranscript(translated);
           let generatedCount = 0;
 
-          for (let i = 0; i < parsedTranslation.length && i <= 40; i++) {
+          for (let i = 0; i < parsedTranslation.length && i <= 40; i++) { // TODO: Need to remove this limit
             console.log(
               `[${portId}] Generating audio for download chunk ${i}/${parsedTranslation.length}`
             );
@@ -344,7 +344,7 @@ export default defineBackground(() => {
           );
           const audioDataPromises = parsedTranslation.map(
             async (segment, index) => {
-              if(index > 40 ) return null; // Skip segments beyond 40 for testing
+              if (index > 40 ) return null; // TODO: Need to remove this limit
               try {
                 // Find original segment to get correct start time, handle potential length mismatch
                 const originalSegment =
