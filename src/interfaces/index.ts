@@ -1,7 +1,8 @@
 export interface TranscriptSegment {
   timestamp: string;
   text: string;
-  startTime?: number;
+  startTime: number;
+  duration: number;
 }
 
 export interface GeminiPart {
@@ -38,6 +39,7 @@ export interface SegmentAudioData {
   text: string;
   audioContent: string; // Base64 encoded audio data (e.g., WAV or MP3)
   startTime: number; // Include start time for convenience
+  duration: number;
 }
 
 export interface SegmentWithStartTime {

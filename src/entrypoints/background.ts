@@ -329,6 +329,16 @@ export default defineBackground(() => {
           console.log(`[Tab ${tabId}] Parsing translated transcript...`);
           const parsedTranslation = parseTranscript(translated);
 
+          if(parsedTranslation.length === transcription.length) {
+            for (let i = 0; i < parsedTranslation.length; i++) {
+              parsedTranslation[i].startTime = transcription[i].startTime;
+              parsedTranslation[i].duration = transcription[i].duration;
+            }
+          } else {
+            console.warn(
+              `[Tab ${tabId}] Mismatch in segment count: ${parsedTranslation.length} translated vs ${transcription.length} original.`
+            );
+          }
           console.log(
             `[Tab ${tabId}] Generating TTS for ${parsedTranslation.length} sync segments...`
           );
@@ -362,6 +372,7 @@ export default defineBackground(() => {
                   text: segment.text,
                   audioContent,
                   startTime,
+                  duration: segment.duration,
                 } as SegmentAudioData;
               } catch (err) {
                 console.error(

@@ -25,7 +25,7 @@ export const scrapeTranscript = (): TranscriptSegment[] | null => {
   const segmentsContainer = document.querySelector(
     "ytd-transcript-segment-list-renderer div#segments-container"
   );
-
+  const videoElement = document.querySelector("video");
   if (!segmentsContainer) {
     // console.log("Transcript container (segments-container) not found yet.");
     return null; // Transcript panel might not be open or loaded
@@ -51,10 +51,16 @@ export const scrapeTranscript = (): TranscriptSegment[] | null => {
 
     if (text) {
       // Only add if there's actual text content
-      transcriptSegments.push({ timestamp, text, startTime: parseTimestampToSeconds(timestamp) });
+      transcriptSegments.push({ timestamp, text, startTime: parseTimestampToSeconds(timestamp), duration: 0 });
     }
   });
 
+  for (let i = 0; i < transcriptSegments.length - 1; i++) {
+    transcriptSegments[i].duration = transcriptSegments[i + 1].startTime - transcriptSegments[i].startTime;
+  }
+  if (videoElement) {
+    transcriptSegments[transcriptSegments.length - 1].duration = videoElement.duration - transcriptSegments[transcriptSegments.length - 1].startTime;
+  }
   // Return the data only if we actually found segments
   return transcriptSegments.length > 0 ? transcriptSegments : null;
 };
@@ -95,7 +101,7 @@ export const parseTranscript = (
     if (separatorIndex > 0) {
       const timestamp = trimmedLine.substring(0, separatorIndex).trim();
       const text = trimmedLine.substring(separatorIndex + 1).trim();
-      segments.push({ timestamp, text });
+      segments.push({ timestamp, text, startTime: 0, duration: 1 }); // Placeholder values for startTime and duration
     } else {
       // Handle lines that don't contain the " - " separator correctly
       console.warn(
