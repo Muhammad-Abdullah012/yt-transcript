@@ -148,7 +148,7 @@ export default defineContentScript({
         const offset =
           currentTime - (syncAudioData[targetIndex]?.startTime ?? currentTime);
         playSegment(targetIndex, offset); // Play immediately
-        startSyncInterval(); // Start checking time periodically
+        // startSyncInterval(); // Start checking time periodically
         sendStatusUpdate({ state: "playing", segmentIndex: targetIndex });
       }
     }
@@ -256,93 +256,56 @@ export default defineContentScript({
 
       // console.log(`Setting src for ${segmentIdentifier} to ${blobUrl}`);
       audioElement.src = blobUrl;
-      const MAX_AUDIO_RATE = 1.5;
-      const MIN_AUDIO_RATE = 0.6;
-      audioElement.onloadedmetadata = null;
-      audioElement.onloadedmetadata = () => {
+      const handleAudioMeataLoaded = () => {
         if (!audioElement) return; // Safety check
         const audioDuration = audioElement.duration;
         const targetDuration = segment.duration;
 
-        let audioRate = audioDuration / targetDuration;
-        let videoRate = 1;
-        if (audioRate > MAX_AUDIO_RATE) {
-          // Cap audio playback rate
-          audioRate = MAX_AUDIO_RATE;
+        // Calculate playback rate for the video to match the audio
+        const videoRate = audioDuration / targetDuration;
+        console.log("Adjusted video playback rate:", videoRate);
 
-          // Recalculate new video duration needed to match this rate
-          const adjustedTargetDuration = audioDuration / MAX_AUDIO_RATE;
-
-          videoRate = segment.duration / adjustedTargetDuration;
-        } else if (audioRate < MIN_AUDIO_RATE) {
-          audioRate = MIN_AUDIO_RATE;
-          const adjustedTargetDuration = audioDuration / MIN_AUDIO_RATE;
-          videoRate = segment.duration / adjustedTargetDuration;
-        } else {
-          videoRate = 1.0;
-        }
-
-        audioElement.playbackRate = audioRate;
         if (videoElement) {
-          videoElement.playbackRate = Math.max(0.5, Math.min(1.8, videoRate));
+          videoElement.playbackRate = videoRate;
         }
-        console.log(
-          "audio element playback rate => ",
-          audioElement.playbackRate
-        );
-        console.log(
-          "video element playback rate => ",
-          videoElement?.playbackRate
-        );
+
         const playPromise = playAudio(audioElement);
-        if (playPromise !== undefined) {
+
+        if (playPromise != undefined) {
           playPromise
             .then(() => {
-              // Play started successfully
-              // console.log(`${segmentIdentifier} playback started via promise.`);
-              // Set currentTime *after* play() promise resolves for potentially better accuracy
+              // Seek audio after play starts for accuracy
               if (playOffset > 0.1) {
-                // Only seek if offset is significant
                 try {
                   audioElement!.currentTime = playOffset;
-                  // console.log(`Audio currentTime set to ${playOffset.toFixed(2)}s for ${segmentIdentifier}`);
                 } catch (e) {
-                  console.error(
-                    `Error setting audio currentTime after play for ${segmentIdentifier}:`,
-                    e
-                  );
+                  console.error(`Failed to set audio currentTime:`, e);
                 }
               }
+
+              // Pause if not meant to play immediately
               if (!shouldPlay) {
-                audioElement!.pause(); // Pause immediately if needed
-                // console.log(`${segmentIdentifier} paused immediately after load.`);
+                audioElement!.pause();
               }
             })
             .catch((err) => {
-              // Autoplay might be blocked or another error occurred
               handleAudioError(err, segmentIdentifier);
-              // If it failed to play but should have, maybe try again on user interaction?
-              // For now, we rely on video events to retry playback.
+
               if (shouldPlay) {
-                console.warn(
-                  `${segmentIdentifier} failed to play automatically.`
-                );
-                // Ensure state reflects reality
+                console.warn(`${segmentIdentifier} failed to play automatically.`);
                 if (!audioElement?.paused) audioElement?.pause();
               }
             });
         } else {
-          // Fallback for browsers where play() doesn't return a promise (older?)
-          if (shouldPlay) {
-            console.warn(
-              `${segmentIdentifier} play() did not return a promise. Playback might be delayed or fail.`
-            );
-          } else {
-            // Try pausing immediately, might not work reliably
+          // Handle browsers where play() doesn't return a Promise
+          if (!shouldPlay) {
             audioElement.pause();
+          } else {
+            console.warn(`${segmentIdentifier} play() did not return a promise.`);
           }
         }
-      };
+      }
+      audioElement.addEventListener("loadedmetadata", handleAudioMeataLoaded, { once: true })
 
       audioElement.load(); // Load the new source
 
@@ -450,16 +413,13 @@ export default defineContentScript({
         )}s`
       );
 
-      // Play the new segment, whether video is paused or playing
-      // If paused, prepareSegment will load and pause it.
-      // If playing, prepareSegment will load and play it.
-      playSegment(targetIndex, offset);
-
       // Update status based on whether video is playing after seek
       if (!videoElement.paused) {
+        playSegment(targetIndex, offset);
         // startSyncInterval(); // Ensure interval is running if playing
         sendStatusUpdate({ state: "playing", segmentIndex: targetIndex });
       } else {
+        prepareSegment(targetIndex, false);
         stopSyncInterval(); // Ensure interval is stopped if paused
         // Ensure audio is also paused if video is paused after seek
         if (audioElement && !audioElement.paused) audioElement.pause();
@@ -489,8 +449,7 @@ export default defineContentScript({
       segmentId?: string
     ) {
       console.error(
-        `Audio Playback Error for ${
-          segmentId ?? `Seg ${currentSegmentIndex}`
+        `Audio Playback Error for ${segmentId ?? `Seg ${currentSegmentIndex}`
         }:`,
         event
       );
