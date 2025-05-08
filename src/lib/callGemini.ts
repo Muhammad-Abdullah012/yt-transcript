@@ -1,4 +1,4 @@
-import { GEMINI_API_URL } from "@/constants/keys";
+import { getGeminiApiUrl } from "@/constants/keys";
 import { GeminiRequest } from "@/interfaces";
 
 /**
@@ -20,6 +20,10 @@ export async function generateContentWithGemini(
     throw new Error("Gemini API key is required.");
   }
 
+  const GEMINI_API_URL = await getGeminiApiUrl();
+  if (!GEMINI_API_URL) {
+    console.error("GEMINI_API_URL not found!");
+  }
   const apiUrl = `${GEMINI_API_URL}/${modelId}:generateContent?key=${apiKey}`;
 
   const prompt = `Translate the following text to ${targetLanguage}. Output only the translated text, without any introductory phrases or explanations or addition to text (keep the time as is, return the same format but translated):\n\n"${inputText}"`;

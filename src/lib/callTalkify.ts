@@ -1,4 +1,4 @@
-import { TALKIFY_TTS_API_URL } from "@/constants/keys";
+import { getTalkifyTtsApiUrl } from "@/constants/keys";
 import { blobToBase64 } from "./blobToBase64";
 
 /**
@@ -33,6 +33,10 @@ export async function textToSpeechTalkify(
         format: format,
     });
 
+    const TALKIFY_TTS_API_URL = getTalkifyTtsApiUrl()
+    if (!TALKIFY_TTS_API_URL) {
+        console.error("TALKIFY_TTS_API_URL not found!");
+    }
     const apiUrl = `${TALKIFY_TTS_API_URL}?${params.toString()}`;
 
     try {

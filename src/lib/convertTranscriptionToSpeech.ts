@@ -1,7 +1,7 @@
 import { PublicPath } from "wxt/browser";
 import { textToSpeechTalkify } from "./callTalkify";
 import { generateContentWithGemini } from "./callGemini";
-import { GEMINI_API_KEY, TALKIFY_API_KEY } from "@/constants/keys";
+import { getGeminiApiKey, getTalkifyApiKey } from "@/constants/keys";
 
 const video = "https://www.youtube.com/watch?v=uu4Rkyp8_FA";
 
@@ -72,7 +72,11 @@ export const convertTranscriptionToSpeechInUserLangugage = async (
   console.log(`Processing text: "${transcriptions}" for language: ${language}`);
 
   // try {
-    
+  //   const TALKIFY_API_KEY = await getTalkifyApiKey();
+
+  //   if (!TALKIFY_API_KEY) {
+  //      console.error("TALKIFY_API_KEY not found!");
+  //   }
   //   console.log("Converting translated text to speech...");
   //   const audioContent = await textToSpeechTalkify(
   //     TALKIFY_API_KEY,
@@ -87,7 +91,7 @@ export const convertTranscriptionToSpeechInUserLangugage = async (
   //   throw error;
   // }
   const audioContent = await getDummyAudio(i);
-    return audioContent;
+  return audioContent;
 };
 // multiple audio files for different transcription text.
 const getDummyAudio = async (i: number) => {

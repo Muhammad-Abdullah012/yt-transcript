@@ -1,6 +1,6 @@
 // background.ts
 import { ACTION } from "@/constants";
-import { GEMINI_API_KEY } from "@/constants/keys";
+import { getGeminiApiKey } from "@/constants/keys";
 import { TranscriptSegment, SegmentAudioData } from "@/interfaces";
 import { generateContentWithGemini } from "@/lib/callGemini";
 import { convertTranscriptionToSpeechInUserLangugage } from "@/lib/convertTranscriptionToSpeech";
@@ -174,6 +174,11 @@ export default defineBackground(() => {
         portAudioChunks.set(portId, []); // Clear previous chunks for this port/request
 
         try {
+          const GEMINI_API_KEY = await getGeminiApiKey();
+          if (!GEMINI_API_KEY) {
+            console.error("GEMINI_API_KEY not found!");
+            return;
+          }
           const translated = await generateContentWithGemini(
             GEMINI_API_KEY,
             formatTranscript(transcription),
@@ -321,6 +326,11 @@ export default defineBackground(() => {
         try {
           console.log(`[Tab ${tabId}] Translating transcript for sync...`);
           const formatted = formatTranscript(transcription);
+          const GEMINI_API_KEY = await getGeminiApiKey();
+          if (!GEMINI_API_KEY) {
+            console.error("GEMINI_API_KEY not found!");
+            return;
+          }
           const translated = await generateContentWithGemini(
             GEMINI_API_KEY,
             formatted,

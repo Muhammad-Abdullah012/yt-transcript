@@ -491,7 +491,7 @@ export default defineContentScript({
         
         // If reload fails, try the next segment after a delay
         setTimeout(() => {
-          if (!isAudioPlaying && isSyncActive && videoElement && !videoElement.paused) {
+          if (!isAudioPlaying && isSyncActive && videoElement && syncAudioData && !videoElement.paused) {
             nextIndex = currentSegmentIndex + 1 < syncAudioData.length 
               ? currentSegmentIndex + 1 
               : findSegmentIndexForTime(videoElement.currentTime, syncAudioData);
@@ -588,7 +588,7 @@ export default defineContentScript({
                     observer.disconnect();
                     console.error("Timeout waiting for transcript after button click.");
                     browser.runtime.sendMessage({
-                      action: ACTION_TRANSCRIPTION_ERROR,
+                      action: ACTION.TRANSCRIPTION_ERROR,
                       payload: "Timeout waiting for transcript.",
                     });
                   }
@@ -598,7 +598,7 @@ export default defineContentScript({
           } catch (error: any) {
             console.error("Error getting transcript:", error);
             browser.runtime.sendMessage({
-              action: ACTION_TRANSCRIPTION_ERROR,
+              action: ACTION.TRANSCRIPTION_ERROR,
               payload: error.message || "Unknown error getting transcript.",
             });
           }
