@@ -58,12 +58,16 @@ const audioFiles = [
 export const convertTranscriptionToSpeechInUserLangugage = async (
   transcriptions: string,
   language: string,
-  i: number,
+  i: number
 ) => {
   console.log("transcriptions", transcriptions);
   console.log("language", language);
 
-  if (!transcriptions || transcriptions.trim().length === 0 || transcriptions.trim().startsWith("[")) {
+  if (
+    !transcriptions ||
+    transcriptions.trim().length === 0 ||
+    transcriptions.trim().startsWith("[")
+  ) {
     console.log("Skipping empty transcription segment.");
     // Return silence or handle as needed
     const silentAudio = await textToSpeechTalkify("dummy_key", "", undefined);
@@ -71,27 +75,28 @@ export const convertTranscriptionToSpeechInUserLangugage = async (
   }
   console.log(`Processing text: "${transcriptions}" for language: ${language}`);
 
-  // try {
-  //   const TALKIFY_API_KEY = await getTalkifyApiKey();
+  try {
+    const TALKIFY_API_KEY = await getTalkifyApiKey();
 
-  //   if (!TALKIFY_API_KEY) {
-  //      console.error("TALKIFY_API_KEY not found!");
-  //   }
-  //   console.log("Converting translated text to speech...");
-  //   const audioContent = await textToSpeechTalkify(
-  //     TALKIFY_API_KEY,
-  //     transcriptions,
-  //     "wav"
-  //   );
-  //   console.log(`Generated audio (base64 length: ${audioContent.length})`);
-  //   return { audioContent };
-  // } catch (error) {
-  //   console.error(`Error processing segment "${transcriptions}":`, error);
-  //   // Re-throw the error to be caught by the background script loop
-  //   throw error;
-  // }
-  const audioContent = await getDummyAudio(i);
-  return audioContent;
+    if (!TALKIFY_API_KEY) {
+      console.error("TALKIFY_API_KEY not found!");
+      return { audioContent: "" };
+    }
+    console.log("Converting translated text to speech...");
+    const audioContent = await textToSpeechTalkify(
+      TALKIFY_API_KEY,
+      transcriptions,
+      "wav"
+    );
+    console.log(`Generated audio (base64 length: ${audioContent.length})`);
+    return { audioContent };
+  } catch (error) {
+    console.error(`Error processing segment "${transcriptions}":`, error);
+    // Re-throw the error to be caught by the background script loop
+    throw error;
+  }
+  // const audioContent = await getDummyAudio(i);
+  // return audioContent;
 };
 // multiple audio files for different transcription text.
 const getDummyAudio = async (i: number) => {

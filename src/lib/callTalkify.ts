@@ -23,7 +23,7 @@ export async function textToSpeechTalkify(
         console.warn("Talkify called with empty text.");
         // Return a very short silent WAV file in base64 to avoid breaking audio playback logic
         // This represents ~0.05s of silence
-        return "UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAA=";
+        return "data:application/octet-stream;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAA=";
         // Alternatively, throw an error or return empty string if the caller handles it:
         // return "";
     }
@@ -33,9 +33,10 @@ export async function textToSpeechTalkify(
         format: format,
     });
 
-    const TALKIFY_TTS_API_URL = getTalkifyTtsApiUrl()
+    const TALKIFY_TTS_API_URL = await getTalkifyTtsApiUrl()
     if (!TALKIFY_TTS_API_URL) {
         console.error("TALKIFY_TTS_API_URL not found!");
+        return "data:application/octet-stream;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAA=";
     }
     const apiUrl = `${TALKIFY_TTS_API_URL}?${params.toString()}`;
 

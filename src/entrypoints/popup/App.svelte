@@ -506,6 +506,7 @@
           class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 disabled:opacity-50"
           aria-label="Select translation language"
         >
+          <option value="English">English</option>
           <option value="Italian">Italian</option>
           <option value="Spanish">Spanish</option>
           <option value="French">French</option>

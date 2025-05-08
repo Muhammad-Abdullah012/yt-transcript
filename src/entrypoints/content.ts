@@ -52,7 +52,7 @@ export default defineContentScript({
       console.log("playAudio function called!");
       if (videoElement && !videoElement.muted) {
         const muteButton = document.querySelector(
-          `button.ytp-button[aria-label*="Mute"]`
+          `button[aria-label*="Mute"]`
         ) as HTMLButtonElement;
         if (muteButton) {
           muteButton.click();
@@ -231,11 +231,6 @@ export default defineContentScript({
           if (!base64Response.ok)
             throw new Error(`Failed to fetch base64 data URL: ${base64Response.status}`);
           const blob = await base64Response.blob();
-
-          // Validate blob type
-          if (!blob.type.startsWith("audio/")) {
-            throw new Error(`Invalid blob type: ${blob.type}`);
-          }
 
           // Test decode audio
           const testAudio = new Audio(URL.createObjectURL(blob));
